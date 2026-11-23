@@ -18,6 +18,7 @@
 
 #include "base/BitUtilities.h"
 #include "platform/XWindowsClipboardBMPConverter.h"
+#include "platform/XWindowsClipboardImage.h"
 
 namespace inputleap {
 
@@ -63,49 +64,12 @@ XWindowsClipboardBMPConverter::getDataSize() const
 
 std::string XWindowsClipboardBMPConverter::fromIClipboard(const std::string& bmp) const
 {
-    if (bmp.empty()) {
-        return {};
-    }
-
-    // create BMP image
-    std::uint8_t header[14];
-    std::uint8_t* dst = header;
-    store_little_endian_u8(dst, 'B');
-    store_little_endian_u8(dst, 'M');
-    store_little_endian_u32(dst, 14 + bmp.size());
-    store_little_endian_u16(dst, 0);
-    store_little_endian_u16(dst, 0);
-    store_little_endian_u32(dst, 14 + 40);
-    return std::string(reinterpret_cast<const char*>(header), 14) + bmp;
+    return clipboardDibToBmp(bmp);
 }
 
 std::string XWindowsClipboardBMPConverter::toIClipboard(const std::string& bmp) const
 {
-    if (bmp.empty()) {
-        return {};
-    }
-
-    // make sure data is big enough for a BMP file
-    if (bmp.size() <= 14 + 40) {
-        return {};
-    }
-
-    // check BMP file header
-    const std::uint8_t* rawBMPHeader = reinterpret_cast<const std::uint8_t*>(bmp.data());
-    if (rawBMPHeader[0] != 'B' || rawBMPHeader[1] != 'M') {
-        return {};
-    }
-
-    // get offset to image data
-    std::uint32_t offset = load_little_endian_u32(rawBMPHeader + 10);
-
-    // construct BMP
-    if (offset == 14 + 40) {
-        return bmp.substr(14);
-    }
-    else {
-        return bmp.substr(14, 40) + bmp.substr(offset, bmp.size() - offset);
-    }
+    return clipboardImageToDib(bmp, "BMP");
 }
 
 } // namespace inputleap

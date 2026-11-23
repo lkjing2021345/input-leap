@@ -39,6 +39,9 @@
 #include <cstdio>
 #include <cstring>
 #include <vector>
+#include <algorithm>
+#include <cerrno>
+#include <poll.h>
 
 namespace inputleap {
 
@@ -543,12 +546,10 @@ XWindowsClipboard::icccmFillCache()
             continue;
         }
 
-        // see if atom is in target list
-        // XXX -- just ask for the converter's target to see if it's
-        // available rather than checking TARGETS.  i've seen clipboard
-        // owners that don't report all the targets they support.
+        // Avoid initiating large INCR transfers for unsupported targets.
         target = converter->getAtom();
-        if (target == None) {
+        if (target == None ||
+            std::find(targets, targets + numTargets, target) == targets + numTargets) {
             continue;
         }
 
@@ -617,9 +618,24 @@ XWindowsClipboard::icccmGetTime() const
 {
     Atom actualTarget;
     std::string data;
+    if (!icccmGetSelection(m_atomTargets, &actualTarget, &data) ||
+        (actualTarget != m_atomAtom && actualTarget != m_atomTargets)) {
+        return 0;
+    }
+    bool hasTimestamp = false;
+    for (std::size_t offset = 0; offset + sizeof(Atom) <= data.size(); offset += sizeof(Atom)) {
+        Atom atom;
+        std::memcpy(&atom, data.data() + offset, sizeof(atom));
+        hasTimestamp = hasTimestamp || atom == m_atomTimestamp;
+    }
+    if (!hasTimestamp) {
+        return 0;
+    }
+    data.clear();
     if (icccmGetSelection(m_atomTimestamp, &actualTarget, &data) &&
-        actualTarget == m_atomInteger) {
-        Time time = *reinterpret_cast<const Time*>(data.data());
+        actualTarget == m_atomInteger && data.size() >= sizeof(Time)) {
+        Time time;
+        std::memcpy(&time, data.data(), sizeof(time));
         LOG_DEBUG1("got ICCCM time %d", time);
         return time;
     }
@@ -1053,10 +1069,10 @@ XWindowsClipboard::sendReply(Reply* reply)
 
         // send INCR reply if incremental and we haven't replied yet
         if (useINCR && !reply->m_replied) {
-            std::uint32_t size = reply->m_data.size();
+            const unsigned long size = reply->m_data.size();
             if (!XWindowsUtil::setWindowProperty(m_display,
                                 reply->m_requestor, reply->m_property,
-                                &size, 4, m_atomINCR, 32)) {
+                                &size, sizeof(size), m_atomINCR, 32)) {
                 failed = true;
             }
         }
@@ -1358,8 +1374,7 @@ XWindowsClipboard::CICCCMGetClipboard::readClipboard(Display* display,
     XEvent xevent;
     std::vector<XEvent> events;
     Stopwatch timeout(false);    // timer not stopped, not triggered
-    static const double s_timeout = 0.25;    // FIXME -- is this too short?
-    bool noWait = false;
+    static const double s_timeout = 2.0;
     while (!m_done && !m_failed) {
         // fail if timeout has expired
         if (timeout.getTime() >= s_timeout) {
@@ -1368,8 +1383,8 @@ XWindowsClipboard::CICCCMGetClipboard::readClipboard(Display* display,
         }
 
         // process events if any otherwise sleep
-        if (noWait || XPending(display) > 0) {
-            while (!m_done && !m_failed && (noWait || XPending(display) > 0)) {
+        if (XPending(display) > 0) {
+            while (!m_done && !m_failed && XPending(display) > 0) {
                 XNextEvent(display, &xevent);
                 if (!processEvent(display, &xevent)) {
                     // not processed so save it
@@ -1379,16 +1394,21 @@ XWindowsClipboard::CICCCMGetClipboard::readClipboard(Display* display,
                     // reset timer since we've made some progress
                     timeout.reset();
 
-                    // don't sleep anymore, just block waiting for events.
-                    // we're assuming here that the clipboard owner will
-                    // complete the protocol correctly.  if we continue to
-                    // sleep we'll get very bad performance.
-                    noWait = true;
+                }
+                if (timeout.getTime() >= s_timeout) {
+                    m_failed = true;
                 }
             }
         }
         else {
-            inputleap::this_thread_sleep(0.01);
+            // Keep the idle deadline active while waiting for INCR chunks.
+            pollfd descriptor{ConnectionNumber(display), POLLIN, 0};
+            const int remaining = static_cast<int>(
+                (s_timeout - timeout.getTime()) * 1000);
+            if (poll(&descriptor, 1, remaining > 0 ? remaining : 1) < 0 &&
+                errno != EINTR) {
+                m_failed = true;
+            }
         }
     }
 
@@ -1469,22 +1489,18 @@ XWindowsClipboard::CICCCMGetClipboard::processEvent(
         return true;
     }
 
-    // note if incremental.  if we're already incremental then the
-    // selection owner is busted.  if the INCR property has no size
-    // then the selection owner is busted.
+    // SelectionNotify and PropertyNotify can both expose the initial INCR
+    // header. Accept a repeated header before any payload, but not midstream.
     if (target == m_atomIncr) {
-        if (m_incr) {
-            m_failed = true;
-            m_error  = true;
-        }
-        else if (m_data->size() == oldSize) {
+        if (m_incr && oldSize != 0) {
             m_failed = true;
             m_error  = true;
         }
         else {
             m_incr   = true;
 
-            // discard INCR data
+            // Some owners (including xclip) omit the optional size hint.
+            // Completion is determined by the final zero-length data chunk.
             *m_data = "";
         }
     }

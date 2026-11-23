@@ -1,0 +1,3 @@
+Fix X11 clipboard image interoperability with Windows and large incremental
+clipboard transfers. Received bitmap data is available as PNG and BMP, and X11
+PNG selections are converted to the shared bitmap representation.

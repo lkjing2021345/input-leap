@@ -76,7 +76,8 @@ bool XWindowsUtil::getWindowProperty(Display* display, Window window, Atom prope
             break;
 
         case 32:
-            numBytes = 4 * numItems;
+            // Xlib expands each 32-bit wire item to a native unsigned long.
+            numBytes = sizeof(unsigned long) * numItems;
             offset  += numItems;
             break;
         }

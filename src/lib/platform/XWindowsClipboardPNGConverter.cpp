@@ -18,6 +18,7 @@
  */
 
 #include "platform/XWindowsClipboardPNGConverter.h"
+#include "platform/XWindowsClipboardImage.h"
 
 namespace inputleap {
 
@@ -40,7 +41,7 @@ XWindowsClipboardPNGConverter::~XWindowsClipboardPNGConverter()
 IClipboard::EFormat
 XWindowsClipboardPNGConverter::getFormat() const
 {
-    return IClipboard::kPNG;
+    return IClipboard::kBitmap;
 }
 
 Atom
@@ -57,23 +58,12 @@ XWindowsClipboardPNGConverter::getDataSize() const
 
 std::string XWindowsClipboardPNGConverter::fromIClipboard(const std::string& pngdata) const
 {
-    return pngdata;
+    return clipboardDibToPng(pngdata);
 }
 
 std::string XWindowsClipboardPNGConverter::toIClipboard(const std::string& pngdata) const
 {
-    if (pngdata.empty()) {
-        return {};
-    }
-
-    // check PNG file header
-    const std::uint8_t* rawPNGHeader = reinterpret_cast<const std::uint8_t*>(pngdata.data());
-
-    if (rawPNGHeader[0] == 0x89 && rawPNGHeader[1] == 0x50 && rawPNGHeader[2] == 0x4e && rawPNGHeader[3] == 0x47) {
-        return pngdata;
-    }
-
-    return {};
+    return clipboardImageToDib(pngdata, "PNG");
 }
 
 } // namespace inputleap

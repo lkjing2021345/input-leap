@@ -67,6 +67,11 @@ if (UNIX)
     target_link_libraries(platform io net ipc synlib client ${libs})
 endif()
 
+if (BUILD_XWINDOWS)
+    find_package(Qt${QT_DEFAULT_MAJOR_VERSION} COMPONENTS Gui REQUIRED)
+    target_link_libraries(platform Qt${QT_DEFAULT_MAJOR_VERSION}::Gui)
+endif()
+
 if (APPLE)
     find_library(COCOA_LIBRARY Cocoa)
     target_link_libraries(platform ${COCOA_LIBRARY})
